@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -18,6 +19,9 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.chatbot.ai.entity.Chunk;
+import com.chatbot.ai.entity.ChunkEmbedding;
+import com.chatbot.ai.entity.ChunkEmbeddingResult;
+import com.chatbot.ai.repository.ChunkEmbeddingRepository;
 import com.chatbot.ai.util.SimilarityUtil;
 
 @Service
@@ -25,6 +29,9 @@ public class PdfQAService {
 
 	private final Embeddingservice embeddingService = new Embeddingservice();
     private final RestTemplate restTemplate = new RestTemplate();
+    
+    @Autowired
+    private ChunkEmbeddingRepository chunkRepo;
 
     public String askQuestion(String question, List<Chunk> chunks) {
         // Step 1: Embed question
@@ -74,4 +81,33 @@ public class PdfQAService {
 
         return chunks;
     }
+    
+ // Inside PdfQAService.java
+    public ChunkEmbeddingResult extractAndCacheIfNeeded(MultipartFile file) throws IOException {
+        String fileName = file.getOriginalFilename();
+        List<String> chunks;
+        List<List<Float>> embeddings;
+
+        List<ChunkEmbedding> existingChunks = chunkRepo.findByFileName(fileName);
+
+        if (!existingChunks.isEmpty()) {
+            chunks = existingChunks.stream().map(ChunkEmbedding::getChunkText).toList();
+            embeddings = existingChunks.stream().map(ChunkEmbedding::getEmbedding).toList();
+            return new ChunkEmbeddingResult(chunks, embeddings);
+        }
+
+        chunks = extractTextChunks(file);
+        embeddings = embeddingService.embedChunks(chunks);
+
+        for (int i = 0; i < chunks.size(); i++) {
+            ChunkEmbedding ce = new ChunkEmbedding();
+            ce.setChunkText(chunks.get(i));
+            ce.setEmbedding(embeddings.get(i));
+            ce.setFileName(fileName);
+            chunkRepo.save(ce);
+        }
+
+        return new ChunkEmbeddingResult(chunks, embeddings);
+    }
+
 }

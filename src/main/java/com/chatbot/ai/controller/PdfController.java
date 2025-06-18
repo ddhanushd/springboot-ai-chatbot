@@ -3,6 +3,8 @@ package com.chatbot.ai.controller;
 import com.chatbot.ai.service.Embeddingservice;
 import com.chatbot.ai.service.PdfQAService;
 import com.chatbot.ai.entity.ChatResponse;
+import com.chatbot.ai.entity.ChunkEmbeddingResult;
+
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
@@ -31,13 +33,22 @@ public class PdfController {
 
     @PostMapping("/extract")
     public ResponseEntity<?> extractText(@RequestParam("file") MultipartFile file) {
-        try {
-            chunks = pdfService.extractTextChunks(file); // save for reuse
-            chunkEmbeddings = embeddingService.embedChunks(chunks);
-            return ResponseEntity.ok("PDF uploaded and embedded successfully. Ready to ask.");
-        } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to process PDF.");
-        }
+//        try {
+//            chunks = pdfService.extractTextChunks(file); // save for reuse
+//            chunkEmbeddings = embeddingService.embedChunks(chunks);
+//            return ResponseEntity.ok("PDF uploaded and embedded successfully. Ready to ask.");
+//        } catch (IOException e) {
+//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to process PDF.");
+//        }
+    	
+    	  try {
+    	        ChunkEmbeddingResult result = pdfService.extractAndCacheIfNeeded(file);
+    	        this.chunks = result.getChunks();
+    	        this.chunkEmbeddings = result.getEmbeddings();
+    	        return ResponseEntity.ok("PDF uploaded and embedded successfully.");
+    	    } catch (IOException e) {
+    	        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to process PDF.");
+    	    }
     }
 
     @PostMapping("/ask")
@@ -53,9 +64,21 @@ public class PdfController {
             // Step 2: Find top 3 similar chunks
             Map<String, Float> similarityMap = new HashMap<>();
             for (int i = 0; i < chunkEmbeddings.size(); i++) {
-                float score = cosineSimilarity(questionEmbedding, chunkEmbeddings.get(i));
-                similarityMap.put(chunks.get(i), score);
+                List<Float> chunkEmbedding = chunkEmbeddings.get(i);
+                String chunkText = chunks.get(i);
+
+                if (chunkEmbedding == null || chunkEmbedding.isEmpty()) {
+                    continue; // Skip invalid embeddings
+                }
+
+                float score = cosineSimilarity(questionEmbedding, chunkEmbedding);
+                similarityMap.put(chunkText, score);
             }
+
+            if (similarityMap.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No valid chunks found for similarity comparison.");
+            }
+
 
             // Step 3: Sort by similarity and select top 3
             List<String> topChunks = similarityMap.entrySet().stream()
